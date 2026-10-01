@@ -15,6 +15,11 @@ Start the Next.js app using `npm run dev` from **Terminal → New Terminal** in 
 - Enter `<script>alert(1)</script>` as a task and confirm it is rendered as text.
 - Use keyboard navigation to operate controls and dialogs; confirm Escape, the close button, and clicking outside a dialog close it.
 - Clear the browser's site data and refresh to confirm the three first-run sample tasks return.
+- Add a sticky note by double-clicking the canvas and by using **New note**; edit it inline, drag it around, and refresh to confirm notes persist independently of tasks.
+- Drag a sticky note onto today's timeline, pick a time, and confirm it becomes a timed task and appears on the timeline; confirm timed tasks export with a 10-minute `.ics` reminder.
+- Choose **Orbital sweep** and verify unfinished notes move to Drawer Archive; restore/delete an archived note. A converted note should no longer remain on the canvas.
+- Add a calendar snapshot to `orbit.calendar.events.v1` in local storage and confirm today's dated event appears in the timeline. A real provider sync/webhook is not configured.
+- Check the quiet reminder banner for an upcoming item due within an hour; it should not create browser notifications or repeat alarms.
 
 ## Automated checks
 
@@ -22,6 +27,7 @@ Start the Next.js app using `npm run dev` from **Terminal → New Terminal** in 
 npm run lint
 npm run typecheck
 npm run build
+npm run test:calendar
 ```
 
 Authentication and connected calendar sync are intentionally not testable until a backend and provider OAuth configuration are implemented.

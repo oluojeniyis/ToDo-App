@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
+import OrbitCanvas from "./orbit-canvas";
 
 type Priority = "low" | "medium" | "high";
 type Filter = "all" | "active" | "completed";
@@ -12,6 +13,9 @@ type Task = {
   completed: boolean;
   priority: Priority;
   dueDate: string;
+  dueTime?: string;
+  calendarEventId?: string;
+  calendarSyncStatus?: string;
 };
 type Modal = { kind: "task"; id?: string } | { kind: "account" } | null;
 
@@ -58,6 +62,18 @@ function isTask(value: unknown): value is Task {
 }
 
 function calendarUrl(task: Task) {
+  if (task.dueTime) {
+    const start = new Date(`${task.dueDate}T${task.dueTime}:00`);
+    const end = new Date(start.getTime() + 30 * 60_000);
+    const stamp = (date: Date) => `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, "0")}${String(date.getDate()).padStart(2, "0")}T${String(date.getHours()).padStart(2, "0")}${String(date.getMinutes()).padStart(2, "0")}00`;
+    const params = new URLSearchParams({
+      action: "TEMPLATE",
+      text: task.text,
+      dates: `${stamp(start)}/${stamp(end)}`,
+      details: `Orbit task · ${task.priority} priority`,
+    });
+    return `https://calendar.google.com/calendar/render?${params.toString()}`;
+  }
   const next = new Date(`${task.dueDate}T00:00:00`);
   next.setDate(next.getDate() + 1);
   const endDate = `${next.getFullYear()}${String(next.getMonth() + 1).padStart(2, "0")}${String(next.getDate()).padStart(2, "0")}`;
@@ -124,7 +140,8 @@ export default function Home() {
             text: task.text.slice(0, 200),
             priority: priorities.includes(task.priority) ? task.priority : "medium",
             dueDate: validDate(task.dueDate) ? task.dueDate : "",
-          }));
+              ...(typeof task.dueTime === "string" && /^\d{2}:\d{2}$/.test(task.dueTime) ? { dueTime: task.dueTime } : {}),
+            }));
         } else {
           localStorage.setItem(TASKS_KEY, JSON.stringify(loadedTasks));
         }
@@ -259,6 +276,45 @@ export default function Home() {
     return rank[a.priority] - rank[b.priority] || (a.dueDate || "9999").localeCompare(b.dueDate || "9999");
   })[0];
 
+  function convertStickyNote(note: { id: string; text: string }, date: string, time: string) {
+    const text = note.text.trim().slice(0, 200) || "Untitled note";
+    saveTasks([{
+      id: makeId(),
+      text,
+      completed: false,
+      priority: "medium",
+      dueDate: date,
+      dueTime: time,
+    }, ...tasks]);
+    notify("Note added to today’s timeline.");
+  }
+
+  function applyCalendarChange(change: { type: "updated" | "deleted"; event: { id: string; summary?: string; start?: { date?: string; dateTime?: string }; extendedProperties?: { private?: { orbitTaskId?: string } } } }) {
+    const event = change.event;
+    const taskId = event.extendedProperties?.private?.orbitTaskId;
+    const matching = tasks.find((task) => task.calendarEventId === event.id || task.id === taskId);
+    if (!matching) return;
+    if (change.type === "deleted") {
+      saveTasks(tasks.map((task) => task.id === matching.id ? { ...task, calendarSyncStatus: "event-deleted" } : task));
+      return;
+    }
+    const start = event.start?.dateTime ? new Date(event.start.dateTime) : null;
+    const date = event.start?.date ?? (start && !Number.isNaN(start.getTime())
+      ? `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, "0")}-${String(start.getDate()).padStart(2, "0")}`
+      : undefined);
+    const time = start && !Number.isNaN(start.getTime())
+      ? `${String(start.getHours()).padStart(2, "0")}:${String(start.getMinutes()).padStart(2, "0")}`
+      : undefined;
+    saveTasks(tasks.map((task) => task.id === matching.id ? {
+      ...task,
+      ...(event.summary?.trim() ? { text: event.summary.slice(0, 200) } : {}),
+      ...(date ? { dueDate: date } : {}),
+      ...(time ? { dueTime: time } : {}),
+      calendarEventId: event.id,
+      calendarSyncStatus: "event-modified",
+    } : task));
+  }
+
   function exportCalendar() {
     const dated = tasks.filter((task) => task.dueDate);
     if (!dated.length) {
@@ -266,6 +322,12 @@ export default function Home() {
       return;
     }
     const events = dated.map((task) => {
+      if (task.dueTime) {
+        const start = new Date(`${task.dueDate}T${task.dueTime}:00`);
+        const end = new Date(start.getTime() + 30 * 60_000);
+        const stamp = (date: Date) => date.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
+        return `BEGIN:VEVENT\nUID:${task.id}@orbit.local\nDTSTAMP:${stamp(new Date())}\nDTSTART:${stamp(start)}\nDTEND:${stamp(end)}\nSUMMARY:${escapeCalendarText(task.text)}\nDESCRIPTION:${escapeCalendarText(`Orbit task · ${task.priority} priority`)}\nBEGIN:VALARM\nTRIGGER:-PT10M\nACTION:DISPLAY\nDESCRIPTION:${escapeCalendarText(task.text)}\nEND:VALARM\nEND:VEVENT`;
+      }
       const next = new Date(`${task.dueDate}T00:00:00`);
       next.setDate(next.getDate() + 1);
       const end = `${next.getFullYear()}${String(next.getMonth() + 1).padStart(2, "0")}${String(next.getDate()).padStart(2, "0")}`;
@@ -352,6 +414,8 @@ export default function Home() {
             </article>
           </section>
 
+          <OrbitCanvas tasks={tasks} onConvert={convertStickyNote} onCalendarChange={applyCalendarChange} />
+
           <section aria-labelledby="tasksHeading">
             <div className="section-heading">
               <div className="section-title"><h2 id="tasksHeading">Your tasks</h2><span>{visibleTasks.length} {visibleTasks.length === 1 ? "item" : "items"}</span></div>
@@ -370,6 +434,9 @@ export default function Home() {
                   <div className="task-main"><span className="task-title">{task.text}</span><div className="task-subline">
                     <span className={`priority ${task.priority}`}>{task.priority}</span>
                     {task.dueDate && <span className={`due-date${overdue ? " overdue" : ""}`}><Icon name="calendar" />{overdue ? "Overdue · " : "Due "}{displayDate(task.dueDate)}</span>}
+                    {task.dueTime && <span className="due-date">{task.dueTime}</span>}
+                    {task.calendarSyncStatus === "event-deleted" && <span className="sync-state">Calendar event removed</span>}
+                    {task.calendarSyncStatus === "event-modified" && <span className="sync-state">Calendar updated</span>}
                   </div></div>
                   <div className="task-actions">
                     {task.dueDate && <a className="icon-button calendar-task-link" href={calendarUrl(task)} target="_blank" rel="noreferrer" aria-label={`Add ${task.text} to Google Calendar`} title="Add to Google Calendar"><Icon name="calendar" /></a>}

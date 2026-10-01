@@ -49,6 +49,12 @@ function validDate(value: unknown): value is string {
   return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day;
 }
 
+function validTime(value: unknown): value is string {
+  if (typeof value !== "string" || !/^\d{2}:\d{2}$/.test(value)) return false;
+  const [hours, minutes] = value.split(":").map(Number);
+  return hours <= 23 && minutes <= 59;
+}
+
 function displayDate(value: string) {
   const [year, month, day] = value.split("-").map(Number);
   return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(new Date(year, month - 1, day));
@@ -140,7 +146,7 @@ export default function Home() {
             text: task.text.slice(0, 200),
             priority: priorities.includes(task.priority) ? task.priority : "medium",
             dueDate: validDate(task.dueDate) ? task.dueDate : "",
-              ...(typeof task.dueTime === "string" && /^\d{2}:\d{2}$/.test(task.dueTime) ? { dueTime: task.dueTime } : {}),
+              dueTime: validTime(task.dueTime) ? task.dueTime : undefined,
             }));
         } else {
           localStorage.setItem(TASKS_KEY, JSON.stringify(loadedTasks));
@@ -309,7 +315,7 @@ export default function Home() {
       ...task,
       ...(event.summary?.trim() ? { text: event.summary.slice(0, 200) } : {}),
       ...(date ? { dueDate: date } : {}),
-      ...(time ? { dueTime: time } : {}),
+      ...(time ? { dueTime: time } : event.start?.date ? { dueTime: undefined } : {}),
       calendarEventId: event.id,
       calendarSyncStatus: "event-modified",
     } : task));

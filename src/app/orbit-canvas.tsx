@@ -201,7 +201,11 @@ export default function OrbitCanvas({ tasks, onConvert, onCalendarChange }: Prop
 
   useEffect(() => {
     function onStorage(event: StorageEvent) {
-      if (event.key !== EVENTS_KEY || !event.newValue) return;
+      if (event.key !== EVENTS_KEY) return;
+      if (!event.newValue) {
+        setEvents([]);
+        return;
+      }
       try {
         const parsed: unknown = JSON.parse(event.newValue);
         if (Array.isArray(parsed)) setEvents(parsed.filter(validCalendarEvent));

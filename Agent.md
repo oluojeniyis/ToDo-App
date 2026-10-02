@@ -2,9 +2,9 @@
 
 ## Project overview
 
-TeesTale is the main storefront at `src/app/page.tsx`, built with Next.js App Router, React, TypeScript, and Tailwind CSS 4. Its product catalog and models live in `src/productsData.ts` and `src/types.ts`; shop components are separated under `src/app/components/`, with their styles in `src/app/shop.module.css`.
+TeesTale is a separate storefront at `src/app/teestale/page.tsx` (`/teestale`), built with Next.js App Router, React, TypeScript, and Tailwind CSS 4. Its product catalog and models live in `src/productsData.ts` and `src/types.ts`; shop components are separated under `src/app/components/`, with their styles in `src/app/shop.module.css`.
 
-The original Orbit task dashboard remains available at `/orbit` in `src/app/orbit/page.tsx`, with its canvas at `src/app/orbit-canvas.tsx` and global styles in `src/app/globals.css`. Supabase schema and client setup are scaffolding only; the storefront catalog and `/api/products` currently use mock data.
+Orbit remains the main home route at `src/app/page.tsx` (`/`), with its canvas at `src/app/orbit-canvas.tsx` and global styles in `src/app/globals.css`. Supabase schema and client setup are scaffolding only; the storefront catalog and `/api/products` currently use mock data.
 
 ## Development
 
@@ -16,7 +16,7 @@ The original Orbit task dashboard remains available at `/orbit` in `src/app/orbi
 ## Project conventions
 
 - Preserve the existing Next.js App Router structure, TypeScript types, and CSS conventions.
-- Keep the storefront catalog and the Orbit dashboard as separate routes/features; do not remove Orbit task, calendar-adapter, or canvas behavior when changing the shop.
+- Keep the storefront at `/teestale` and Orbit at `/` as separate routes/features; do not remove Orbit task, calendar-adapter, or canvas behavior when changing the shop.
 - Keep shop customizations and sales-unit selection in cart lines, and preserve the client-side cart in its own `teestale.cart.v1` localStorage record.
 - Keep task data and appearance local to the browser; task state is persisted in `localStorage`.
 - Keep sticky canvas notes in their own `orbit.canvas.v1` localStorage record, separate from task storage. Preserve the local-midnight sweep and archive/restore behavior.

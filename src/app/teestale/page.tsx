@@ -2,11 +2,11 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import CartDrawer from "./components/CartDrawer";
-import ProductCard from "./components/ProductCard";
-import styles from "./shop.module.css";
-import { products } from "../productsData";
-import type { ApparelCategory, CartLine, Product, ProductCustomization } from "../types";
+import CartDrawer from "../components/CartDrawer";
+import ProductCard from "../components/ProductCard";
+import styles from "../shop.module.css";
+import { products } from "../../productsData";
+import type { ApparelCategory, CartLine, Product, ProductCustomization } from "../../types";
 
 const CART_STORAGE_KEY = "teestale.cart.v1";
 const categories: { id: ApparelCategory | "all"; label: string }[] = [
@@ -181,7 +181,7 @@ export default function Home() {
       </div>
       <div className={styles.shell}>
         <header className={styles.header}>
-          <Link className={styles.brand} href="/" aria-label="TeesTale home">
+          <Link className={styles.brand} href="/teestale" aria-label="TeesTale home">
             <span className={styles.brandMark} aria-hidden="true">
               <svg viewBox="0 0 32 32" fill="none"><path d="M7 10 13 7h6l6 3 4 2-3 6-4-2v9H10v-9l-4 2-3-6 4-2Z" fill="currentColor" /><path d="M13 7c0 2 1 3 3 3s3-1 3-3" stroke="#f8f8f5" strokeWidth="1.5" /></svg>
             </span>
@@ -293,7 +293,7 @@ export default function Home() {
         </main>
 
         <footer className={styles.footer} id="footer">
-          <Link className={styles.brand} href="/" aria-label="TeesTale home">
+          <Link className={styles.brand} href="/teestale" aria-label="TeesTale home">
             <span className={styles.brandMark} aria-hidden="true">
               <svg viewBox="0 0 32 32" fill="none"><path d="M7 10 13 7h6l6 3 4 2-3 6-4-2v9H10v-9l-4 2-3-6 4-2Z" fill="currentColor" /></svg>
             </span>

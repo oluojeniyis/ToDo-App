@@ -1,501 +1,308 @@
 "use client";
 
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
-import OrbitCanvas from "./orbit-canvas";
+import CartDrawer from "./components/CartDrawer";
+import ProductCard from "./components/ProductCard";
+import styles from "./shop.module.css";
+import { products } from "../productsData";
+import type { ApparelCategory, CartLine, Product, ProductCustomization } from "../types";
 
-type Priority = "low" | "medium" | "high";
-type Filter = "all" | "active" | "completed";
-type Theme = "light" | "dark" | "neon" | "glass";
-type Task = {
-  id: string;
-  text: string;
-  completed: boolean;
-  priority: Priority;
-  dueDate: string;
-  dueTime?: string;
-  calendarEventId?: string;
-  calendarSyncStatus?: string;
-};
-type Modal = { kind: "task"; id?: string } | { kind: "account" } | null;
+const CART_STORAGE_KEY = "teestale.cart.v1";
+const categories: { id: ApparelCategory | "all"; label: string }[] = [
+  { id: "all", label: "All pieces" },
+  { id: "wholesale-blanks", label: "Wholesale Blanks" },
+  { id: "retail-polos", label: "Retail Polos" },
+  { id: "bespoke-mesh", label: "Bespoke / Custom Mesh" },
+  { id: "accessories", label: "Accessories" },
+];
 
-const TASKS_KEY = "orbit.tasks.v1";
-const THEME_KEY = "orbit.theme.v1";
-const themes: Theme[] = ["light", "dark", "neon", "glass"];
-const priorities: Priority[] = ["low", "medium", "high"];
-
-function dateOffset(offset: number) {
-  const date = new Date();
-  date.setDate(date.getDate() + offset);
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-}
-
-function makeId() {
-  return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
-function starterTasks(): Task[] {
+function lineId(productId: string, customization: ProductCustomization): string {
   return [
-    { id: makeId(), text: "Shape the launch story for the new product", completed: false, priority: "high", dueDate: dateOffset(0) },
-    { id: makeId(), text: "Review feedback from the design sync", completed: true, priority: "medium", dueDate: dateOffset(-1) },
-    { id: makeId(), text: "Make space for a proper lunch break", completed: false, priority: "low", dueDate: dateOffset(1) },
-  ];
+    productId,
+    customization.salesUnitId,
+    customization.size,
+    customization.colorId,
+    customization.meshPlacement,
+  ].join(":");
 }
 
-function validDate(value: unknown): value is string {
-  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-  const [year, month, day] = value.split("-").map(Number);
-  const date = new Date(year, month - 1, day);
-  return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day;
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function validTime(value: unknown): value is string {
-  if (typeof value !== "string" || !/^\d{2}:\d{2}$/.test(value)) return false;
-  const [hours, minutes] = value.split(":").map(Number);
-  return hours <= 23 && minutes <= 59;
-}
+function restoreCart(value: unknown): { items: CartLine[]; hadInvalidItems: boolean } {
+  if (!Array.isArray(value)) return { items: [], hadInvalidItems: true };
+  const restored: CartLine[] = [];
+  let hadInvalidItems = false;
 
-function displayDate(value: string) {
-  const [year, month, day] = value.split("-").map(Number);
-  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(new Date(year, month - 1, day));
-}
+  for (const entry of value) {
+    if (!isRecord(entry) || typeof entry.productId !== "string" || !isRecord(entry.customization)) {
+      hadInvalidItems = true;
+      continue;
+    }
+    const product = products.find((item) => item.id === entry.productId);
+    const customization = entry.customization;
+    const salesUnit = product?.salesUnits.find((unit) => unit.id === customization.salesUnitId);
+    if (
+      !product ||
+      typeof customization.size !== "string" ||
+      !product.sizes.includes(customization.size) ||
+      typeof customization.colorId !== "string" ||
+      !product.colors.some((color) => color.id === customization.colorId) ||
+      typeof customization.meshPlacement !== "string" ||
+      !product.meshPlacements.includes(customization.meshPlacement as ProductCustomization["meshPlacement"]) ||
+      !salesUnit ||
+      typeof entry.quantity !== "number" ||
+      !Number.isInteger(entry.quantity) ||
+      entry.quantity < salesUnit.minimumOrderQuantity ||
+      entry.quantity > 9999
+    ) {
+      hadInvalidItems = true;
+      continue;
+    }
 
-function isTask(value: unknown): value is Task {
-  if (!value || typeof value !== "object") return false;
-  const task = value as Partial<Task>;
-  return typeof task.id === "string" && typeof task.text === "string" &&
-    typeof task.completed === "boolean" && priorities.includes(task.priority as Priority);
-}
-
-function calendarUrl(task: Task) {
-  if (task.dueTime) {
-    const start = new Date(`${task.dueDate}T${task.dueTime}:00`);
-    const end = new Date(start.getTime() + 30 * 60_000);
-    const stamp = (date: Date) => `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, "0")}${String(date.getDate()).padStart(2, "0")}T${String(date.getHours()).padStart(2, "0")}${String(date.getMinutes()).padStart(2, "0")}00`;
-    const params = new URLSearchParams({
-      action: "TEMPLATE",
-      text: task.text,
-      dates: `${stamp(start)}/${stamp(end)}`,
-      details: `Orbit task · ${task.priority} priority`,
-    });
-    return `https://calendar.google.com/calendar/render?${params.toString()}`;
+    const savedCustomization: ProductCustomization = {
+      size: customization.size,
+      colorId: customization.colorId,
+      meshPlacement: customization.meshPlacement as ProductCustomization["meshPlacement"],
+      salesUnitId: salesUnit.id,
+    };
+    const id = lineId(product.id, savedCustomization);
+    const existing = restored.find((line) => line.id === id);
+    if (existing) {
+      existing.quantity = Math.min(existing.quantity + entry.quantity, 9999);
+    } else {
+      restored.push({ id, productId: product.id, customization: savedCustomization, quantity: entry.quantity, unitPrice: salesUnit.price });
+    }
   }
-  const next = new Date(`${task.dueDate}T00:00:00`);
-  next.setDate(next.getDate() + 1);
-  const endDate = `${next.getFullYear()}${String(next.getMonth() + 1).padStart(2, "0")}${String(next.getDate()).padStart(2, "0")}`;
-  const params = new URLSearchParams({
-    action: "TEMPLATE",
-    text: task.text,
-    dates: `${task.dueDate.replaceAll("-", "")}/${endDate}`,
-    details: `Orbit task · ${task.priority} priority`,
-  });
-  return `https://calendar.google.com/calendar/render?${params.toString()}`;
-}
-
-function escapeCalendarText(value: string) {
-  return value.replace(/\\/g, "\\\\").replace(/\r?\n/g, "\\n").replace(/,/g, "\\,").replace(/;/g, "\\;");
-}
-
-function Icon({ name }: { name: "orbit" | "grid" | "list" | "clock" | "check" | "spark" | "plus" | "edit" | "delete" | "calendar" | "close" | "arrow" }) {
-  const paths: Record<typeof name, React.ReactNode> = {
-    orbit: <><circle cx="12" cy="12" r="3" fill="currentColor" /><ellipse cx="12" cy="12" rx="9" ry="4.5" transform="rotate(-35 12 12)" /><circle cx="18.6" cy="7.3" r="1.4" fill="currentColor" /></>,
-    grid: <><rect x="3.5" y="3.5" width="7" height="7" rx="2" /><rect x="13.5" y="3.5" width="7" height="7" rx="2" /><rect x="3.5" y="13.5" width="7" height="7" rx="2" /><rect x="13.5" y="13.5" width="7" height="7" rx="2" /></>,
-    list: <><path d="M8 6h12M8 12h12M8 18h12" /><path d="m3.5 6 .8.8L5.8 5M3.5 12l.8.8 1.5-1.8M3.5 18l.8.8 1.5-1.8" /></>,
-    clock: <><circle cx="12" cy="12" r="8.5" /><path d="M12 7v5l3 2" /></>,
-    check: <><circle cx="12" cy="12" r="8.5" /><path d="m8.5 12 2.3 2.3 4.8-5" /></>,
-    spark: <><path d="m10 2 1.6 5.2L17 9l-5.4 1.8L10 16l-1.6-5.2L3 9l5.4-1.8L10 2Z" /><path d="m16 13 .8 2.2L19 16l-2.2.8L16 19l-.8-2.2L13 16l2.2-.8L16 13Z" /></>,
-    plus: <path d="M10 4v12M4 10h12" />,
-    edit: <><path d="m13.5 5.5 5 5M4 20l4.1-.9L19 8.2a2.1 2.1 0 0 0-3-3L5.1 16.1 4 20Z" /></>,
-    delete: <><path d="M4 7h12M9 7V4h4v3m2 0-.7 12H6.7L6 7" /><path d="M9 10v6m3-6v6" /></>,
-    calendar: <><rect x="3.5" y="4.5" width="13" height="12" rx="2" /><path d="M7 3v3M13 3v3M3.5 8.5h13" /></>,
-    close: <path d="m5 5 10 10M15 5 5 15" />,
-    arrow: <><path d="M3 8h10M8 3l5 5-5 5" /></>,
-  };
-  return <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
+  return { items: restored, hadInvalidItems };
 }
 
 export default function Home() {
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [filter, setFilter] = useState<Filter>("all");
-  const [theme, setTheme] = useState<Theme>("dark");
-  const [modal, setModal] = useState<Modal>(null);
-  const [taskName, setTaskName] = useState("");
-  const [priority, setPriority] = useState<Priority>("medium");
-  const [dueDate, setDueDate] = useState("");
-  const [accountMode, setAccountMode] = useState<"signin" | "signup">("signin");
-  const [feedback, setFeedback] = useState("");
+  const [cartItems, setCartItems] = useState<CartLine[]>([]);
+  const [cartLoading, setCartLoading] = useState(true);
+  const [canPersist, setCanPersist] = useState(false);
   const [storageMessage, setStorageMessage] = useState("");
-  const [toast, setToast] = useState("");
-  const [ready, setReady] = useState(false);
-  const nameInput = useRef<HTMLInputElement>(null);
-  const emailInput = useRef<HTMLInputElement>(null);
-  const restoreFocus = useRef<HTMLElement | null>(null);
-  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [selectedCategory, setSelectedCategory] = useState<ApparelCategory | "all">("all");
+  const [search, setSearch] = useState("");
+  const storageWritesDisabled = useRef(false);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      let loadedTasks = starterTasks();
-      let message = "";
       try {
-        const stored = localStorage.getItem(TASKS_KEY);
-        if (stored !== null) {
-          const parsed: unknown = JSON.parse(stored);
-          if (!Array.isArray(parsed) || !parsed.every(isTask)) throw new Error("Invalid task data");
-          loadedTasks = parsed.map((task) => ({
-            ...task,
-            text: task.text.slice(0, 200),
-            priority: priorities.includes(task.priority) ? task.priority : "medium",
-            dueDate: validDate(task.dueDate) ? task.dueDate : "",
-              dueTime: validTime(task.dueTime) ? task.dueTime : undefined,
-            }));
+        const savedCart = window.localStorage.getItem(CART_STORAGE_KEY);
+        if (savedCart === null) {
+          setCartItems([]);
         } else {
-          localStorage.setItem(TASKS_KEY, JSON.stringify(loadedTasks));
+          const result = restoreCart(JSON.parse(savedCart) as unknown);
+          setCartItems(result.items);
+          if (result.hadInvalidItems) {
+            setStorageMessage("Some saved bag items were no longer available and were not restored.");
+          }
         }
+        setCanPersist(true);
       } catch {
-        message = "Saved tasks could not be read or browser storage is unavailable. Starter tasks are shown; changes may not persist.";
+        setStorageMessage("Your saved bag could not be loaded. Changes may not persist in this browser.");
+      } finally {
+        setCartLoading(false);
       }
-      setTasks(loadedTasks);
-      setStorageMessage(message);
-      try {
-        const storedTheme = localStorage.getItem(THEME_KEY);
-        if (themes.includes(storedTheme as Theme)) setTheme(storedTheme as Theme);
-      } catch {
-        setStorageMessage("Appearance settings are unavailable in this browser.");
-      }
-      setReady(true);
     }, 0);
     return () => window.clearTimeout(timer);
   }, []);
 
   useEffect(() => {
-    if (!ready) return;
-    document.documentElement.dataset.theme = theme;
-  }, [theme, ready]);
-
-  function saveTasks(nextTasks: Task[]) {
-    setTasks(nextTasks);
+    if (cartLoading || !canPersist || storageWritesDisabled.current) return;
     try {
-      localStorage.setItem(TASKS_KEY, JSON.stringify(nextTasks));
-      setStorageMessage("");
+      window.localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(cartItems));
     } catch {
-      setStorageMessage("Your changes could not be saved in this browser and may be lost when you close this page.");
+      storageWritesDisabled.current = true;
+      window.setTimeout(() => {
+        setStorageMessage("Your bag is available for this visit, but browser storage is unavailable.");
+      }, 0);
     }
-  }
+  }, [cartItems, cartLoading, canPersist, storageWritesDisabled]);
 
-  function updateTheme(nextTheme: Theme) {
-    setTheme(nextTheme);
-    try {
-      localStorage.setItem(THEME_KEY, nextTheme);
-      setStorageMessage("");
-    } catch {
-      setStorageMessage("Appearance could not be saved. Browser storage may be unavailable.");
-    }
-  }
-
-  useEffect(() => {
-    if (!modal) return;
-    const focusTarget = modal.kind === "task" ? nameInput.current : emailInput.current;
-    focusTarget?.focus();
-    function onKeyDown(event: globalThis.KeyboardEvent) {
-      if (event.key === "Escape") closeModal();
-      if (event.key === "Tab") {
-        const dialog = document.querySelector<HTMLElement>("[data-dialog]");
-        const focusable = dialog?.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled])');
-        if (!focusable?.length) return;
-        const first = focusable[0];
-        const last = focusable[focusable.length - 1];
-        if (event.shiftKey && document.activeElement === first) {
-          event.preventDefault();
-          last.focus();
-        } else if (!event.shiftKey && document.activeElement === last) {
-          event.preventDefault();
-          first.focus();
-        }
-      }
-    }
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [modal]);
-
-  function notify(message: string) {
-    setToast(message);
-    if (toastTimer.current) clearTimeout(toastTimer.current);
-    toastTimer.current = setTimeout(() => setToast(""), 2800);
-  }
-
-  function rememberFocus() {
-    restoreFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-  }
-
-  function closeModal() {
-    setModal(null);
-    setFeedback("");
-    requestAnimationFrame(() => restoreFocus.current?.focus());
-  }
-
-  function openTaskDialog(id?: string) {
-    rememberFocus();
-    const task = tasks.find((item) => item.id === id);
-    setTaskName(task?.text ?? "");
-    setPriority(task?.priority ?? "medium");
-    setDueDate(task?.dueDate ?? "");
-    setModal({ kind: "task", id });
-  }
-
-  function openAccountDialog() {
-    rememberFocus();
-    setAccountMode("signin");
-    setFeedback("");
-    setModal({ kind: "account" });
-  }
-
-  function saveTask(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const text = taskName.trim();
-    if (!text) {
-      notify("Enter a task name before saving.");
-      nameInput.current?.focus();
-      return;
-    }
-    if (modal?.kind !== "task") return;
-    if (modal.id) {
-      saveTasks(tasks.map((task) => task.id === modal.id ? { ...task, text: text.slice(0, 200), priority, dueDate } : task));
-      notify("Task updated.");
-    } else {
-      saveTasks([{ id: makeId(), text: text.slice(0, 200), priority, dueDate, completed: false }, ...tasks]);
-      notify("Task added.");
-    }
-    closeModal();
-  }
-
-  function onModalKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    if (event.target === event.currentTarget) event.stopPropagation();
-  }
-
-  const activeCount = tasks.filter((task) => !task.completed).length;
-  const completedCount = tasks.length - activeCount;
-  const progress = tasks.length ? Math.round((completedCount / tasks.length) * 100) : 0;
-  const highPriorityCount = tasks.filter((task) => !task.completed && task.priority === "high").length;
-  const visibleTasks = tasks.filter((task) => filter === "all" || (filter === "active" ? !task.completed : task.completed));
-  const focusTask = tasks.filter((task) => !task.completed).sort((a, b) => {
-    const rank: Record<Priority, number> = { high: 0, medium: 1, low: 2 };
-    return rank[a.priority] - rank[b.priority] || (a.dueDate || "9999").localeCompare(b.dueDate || "9999");
-  })[0];
-
-  function convertStickyNote(note: { id: string; text: string }, date: string, time: string) {
-    const text = note.text.trim().slice(0, 200) || "Untitled note";
-    saveTasks([{
-      id: makeId(),
-      text,
-      completed: false,
-      priority: "medium",
-      dueDate: date,
-      dueTime: time,
-    }, ...tasks]);
-    notify("Note added to today’s timeline.");
-  }
-
-  function applyCalendarChange(change: { type: "updated" | "deleted"; event: { id: string; summary?: string; start?: { date?: string; dateTime?: string }; extendedProperties?: { private?: { orbitTaskId?: string } } } }) {
-    const event = change.event;
-    const taskId = event.extendedProperties?.private?.orbitTaskId;
-    const matching = tasks.find((task) => task.calendarEventId === event.id || task.id === taskId);
-    if (!matching) return;
-    if (change.type === "deleted") {
-      saveTasks(tasks.map((task) => task.id === matching.id ? { ...task, calendarSyncStatus: "event-deleted" } : task));
-      return;
-    }
-    const start = event.start?.dateTime ? new Date(event.start.dateTime) : null;
-    const date = event.start?.date ?? (start && !Number.isNaN(start.getTime())
-      ? `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, "0")}-${String(start.getDate()).padStart(2, "0")}`
-      : undefined);
-    const time = start && !Number.isNaN(start.getTime())
-      ? `${String(start.getHours()).padStart(2, "0")}:${String(start.getMinutes()).padStart(2, "0")}`
-      : undefined;
-    saveTasks(tasks.map((task) => task.id === matching.id ? {
-      ...task,
-      ...(event.summary?.trim() ? { text: event.summary.slice(0, 200) } : {}),
-      ...(date ? { dueDate: date } : {}),
-      ...(time ? { dueTime: time } : event.start?.date ? { dueTime: undefined } : {}),
-      calendarEventId: event.id,
-      calendarSyncStatus: "event-modified",
-    } : task));
-  }
-
-  function exportCalendar() {
-    const dated = tasks.filter((task) => task.dueDate);
-    if (!dated.length) {
-      notify("Add a due date to a task before exporting.");
-      return;
-    }
-    const events = dated.map((task) => {
-      if (task.dueTime) {
-        const start = new Date(`${task.dueDate}T${task.dueTime}:00`);
-        const end = new Date(start.getTime() + 30 * 60_000);
-        const stamp = (date: Date) => date.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
-        return `BEGIN:VEVENT\nUID:${task.id}@orbit.local\nDTSTAMP:${stamp(new Date())}\nDTSTART:${stamp(start)}\nDTEND:${stamp(end)}\nSUMMARY:${escapeCalendarText(task.text)}\nDESCRIPTION:${escapeCalendarText(`Orbit task · ${task.priority} priority`)}\nBEGIN:VALARM\nTRIGGER:-PT10M\nACTION:DISPLAY\nDESCRIPTION:${escapeCalendarText(task.text)}\nEND:VALARM\nEND:VEVENT`;
-      }
-      const next = new Date(`${task.dueDate}T00:00:00`);
-      next.setDate(next.getDate() + 1);
-      const end = `${next.getFullYear()}${String(next.getMonth() + 1).padStart(2, "0")}${String(next.getDate()).padStart(2, "0")}`;
-      return `BEGIN:VEVENT\nUID:${task.id}@orbit.local\nDTSTAMP:${new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "")}\nDTSTART;VALUE=DATE:${task.dueDate.replaceAll("-", "")}\nDTEND;VALUE=DATE:${end}\nSUMMARY:${escapeCalendarText(task.text)}\nDESCRIPTION:${escapeCalendarText(`Orbit task · ${task.priority} priority`)}\nEND:VEVENT`;
+  const visibleProducts = useMemo(() => {
+    const query = search.trim().toLocaleLowerCase();
+    return products.filter((product) => {
+      const matchesCategory = selectedCategory === "all" || product.category === selectedCategory;
+      const matchesQuery = !query || `${product.name} ${product.description} ${product.categoryLabel}`.toLocaleLowerCase().includes(query);
+      return matchesCategory && matchesQuery;
     });
-    try {
-      const blob = new Blob([`BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//Orbit//Task list//EN\n${events.join("\n")}\nEND:VCALENDAR`], { type: "text/calendar;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = "orbit-tasks.ics";
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
-      notify("Calendar file downloaded.");
-    } catch {
-      notify("The calendar file could not be created in this browser.");
-    }
+  }, [search, selectedCategory]);
+
+  function addToCart(product: Product, customization: ProductCustomization) {
+    const salesUnit = product.salesUnits.find((unit) => unit.id === customization.salesUnitId);
+    if (!salesUnit) return;
+    const id = lineId(product.id, customization);
+    setCartItems((current) => {
+      const existing = current.find((item) => item.id === id);
+      if (existing) {
+        return current.map((item) => item.id === id
+          ? { ...item, quantity: Math.min(item.quantity + salesUnit.minimumOrderQuantity, 9999) }
+          : item);
+      }
+      return [...current, {
+        id,
+        productId: product.id,
+        customization,
+        quantity: salesUnit.minimumOrderQuantity,
+        unitPrice: salesUnit.price,
+      }];
+    });
   }
+
+  function changeQuantity(id: string, quantity: number) {
+    setCartItems((current) => current.map((item) => {
+      if (item.id !== id) return item;
+      const product = products.find((entry) => entry.id === item.productId);
+      const salesUnit = product?.salesUnits.find((entry) => entry.id === item.customization.salesUnitId);
+      const minimum = salesUnit?.minimumOrderQuantity ?? 1;
+      return { ...item, quantity: Math.max(minimum, Math.min(quantity, 9999)) };
+    }));
+  }
+
+  const categoryGroups = categories
+    .filter((category) => category.id !== "all")
+    .map((category) => ({
+      id: category.id as ApparelCategory,
+      label: category.label,
+      items: visibleProducts.filter((product) => product.category === category.id),
+    }))
+    .filter((group) => group.items.length > 0);
 
   return (
-    <div className="app-shell">
-      <header className="topbar">
-        <Link className="brand" href="/" aria-label="Orbit home">
-          <span className="brand-mark"><Icon name="orbit" /></span>
-          <span className="brand-name">orbit<span> / workspace</span></span>
-        </Link>
-        <div className="topbar-right">
-          <span className="system-status"><span className="status-dot" />All systems focused</span>
-          <label className="theme-control"><span>Appearance</span>
-            <select className="theme-select" value={theme} onChange={(event) => updateTheme(event.target.value as Theme)} aria-label="Choose appearance">
-              <option value="light">Light</option><option value="dark">Dark</option><option value="neon">Neon</option><option value="glass">Glass</option>
-            </select>
-          </label>
-          <button className="account-button" type="button" onClick={openAccountDialog}>Sign in</button>
-        </div>
-      </header>
-
-      <div className="workspace">
-        <aside className="sidebar" aria-label="Workspace navigation">
-          <div>
-            <p className="nav-label">Workspace</p>
-            <nav aria-label="Task views"><ul className="nav-list">
-              <li><button className="nav-link" type="button" onClick={() => setFilter("all")} aria-current={filter === "all" ? "page" : undefined}><Icon name="grid" />Overview</button></li>
-              <li><button className="nav-link" type="button" onClick={() => setFilter("all")}><Icon name="list" />My tasks<span className="nav-count">{tasks.length}</span></button></li>
-              <li><button className="nav-link" type="button" onClick={() => setFilter("active")} aria-current={filter === "active" ? "page" : undefined}><Icon name="clock" />In progress</button></li>
-              <li><button className="nav-link" type="button" onClick={() => setFilter("completed")} aria-current={filter === "completed" ? "page" : undefined}><Icon name="check" />Completed</button></li>
-            </ul></nav>
-          </div>
-          <div className="sidebar-note">
-            <span className="eyebrow"><Icon name="spark" />Orbit insight</span>
-            <p><strong>Small steps still move you forward.</strong> Your tasks stay in this browser. Calendar connections are not configured.</p>
-            <button className="sidebar-link" type="button" onClick={openAccountDialog}>Explore connections <Icon name="arrow" /></button>
-          </div>
-        </aside>
+    <div className={styles.shopPage}>
+      <div className={styles.announcement}>
+        <span>Made for the everyday hustle</span>
+        <span className={styles.announcementDivider} aria-hidden="true">/</span>
+        <span>Wholesale and retail, all in one place</span>
+      </div>
+      <div className={styles.shell}>
+        <header className={styles.header}>
+          <Link className={styles.brand} href="/" aria-label="TeesTale home">
+            <span className={styles.brandMark} aria-hidden="true">
+              <svg viewBox="0 0 32 32" fill="none"><path d="M7 10 13 7h6l6 3 4 2-3 6-4-2v9H10v-9l-4 2-3-6 4-2Z" fill="currentColor" /><path d="M13 7c0 2 1 3 3 3s3-1 3-3" stroke="#f8f8f5" strokeWidth="1.5" /></svg>
+            </span>
+            <span className={styles.brandName}>TeesTale<span>®</span></span>
+          </Link>
+          <nav className={styles.headerNav} aria-label="Main navigation">
+            <a href="#collection">Shop</a>
+            <a href="#wholesale">Wholesale</a>
+            <a href="#footer">Our story</a>
+          </nav>
+          <CartDrawer
+            products={products}
+            items={cartItems}
+            loading={cartLoading}
+            storageMessage={storageMessage}
+            onChangeQuantity={changeQuantity}
+            onRemove={(id) => setCartItems((items) => items.filter((item) => item.id !== id))}
+          />
+        </header>
 
         <main>
-          <section className="page-heading">
+          <section className={styles.hero} aria-labelledby="hero-title">
+            <div className={styles.heroCopy}>
+              <p className={styles.eyebrow}><span /> CLOTHING FOR THE WAY YOU MOVE</p>
+              <h1 id="hero-title">Good things<br />start with <em>the basics.</em></h1>
+              <p className={styles.heroIntro}>Thoughtful tees, polos, and custom mesh made for your brand, your team, and your every day.</p>
+              <a className={styles.heroButton} href="#collection">Explore the collection <span aria-hidden="true">↘</span></a>
+            </div>
+            <div className={styles.heroArt} aria-hidden="true">
+              <span className={styles.heroArtLabel}>THE EVERYDAY EDIT<br /><strong>VOL. 01 / 2026</strong></span>
+              <svg viewBox="0 0 440 330" fill="none">
+                <circle cx="239" cy="165" r="131" fill="#ebe8df" />
+                <path d="m147 77 39-27h57l39 27 50 23-29 53-31-16v112H157V137l-31 16-29-53 50-23Z" fill="#a4b3a2" />
+                <path d="m186 50 16 23h26l15-23m-85 28 36 28m67-28-35 28" stroke="#f3f3ed" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M157 215h115" stroke="#8b9b89" strokeWidth="2" />
+                <path d="M325 57c16 18 25 42 25 67m-243 96c-8-18-12-37-12-57" stroke="#bf775e" strokeWidth="2" strokeDasharray="3 7" />
+                <circle cx="351" cy="126" r="6" fill="#bf775e" />
+                <circle cx="96" cy="163" r="4" fill="#bf775e" />
+              </svg>
+              <span className={styles.heroArtCaption}>EVERYDAY, REIMAGINED.</span>
+            </div>
+          </section>
+
+          <section className={styles.collection} id="collection" aria-labelledby="collection-title">
+            <div className={styles.collectionIntro}>
+              <div>
+                <p className={styles.eyebrow}>THE TEESTALE COLLECTION</p>
+                <h2 id="collection-title">Find your fit.</h2>
+              </div>
+              <p>Good fabric. Great fit. Ready for whatever you have in mind.</p>
+            </div>
+
+            <div className={styles.catalogToolbar}>
+              <div className={styles.categoryFilters} role="group" aria-label="Filter by apparel category">
+                {categories.map((category) => (
+                  <button
+                    key={category.id}
+                    type="button"
+                    className={`${styles.categoryButton} ${selectedCategory === category.id ? styles.categoryButtonActive : ""}`}
+                    aria-pressed={selectedCategory === category.id}
+                    onClick={() => setSelectedCategory(category.id)}
+                  >
+                    {category.label}
+                  </button>
+                ))}
+              </div>
+              <label className={styles.searchField}>
+                <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="8.8" cy="8.8" r="5.8" stroke="currentColor" strokeWidth="1.5" /><path d="m13.2 13.2 4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /></svg>
+                <span className={styles.srOnly}>Search the collection</span>
+                <input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search pieces" />
+                {search && <button type="button" aria-label="Clear search" onClick={() => setSearch("")}>×</button>}
+              </label>
+            </div>
+
+            <div className={styles.resultsLine} aria-live="polite">
+              <span>{visibleProducts.length} {visibleProducts.length === 1 ? "piece" : "pieces"}</span>
+              <span>Prices shown in NGN · ₦</span>
+            </div>
+
+            {visibleProducts.length === 0 ? (
+              <div className={styles.noResults}>
+                <h3>No pieces found.</h3>
+                <p>Try a different search or browse another category.</p>
+                <button type="button" onClick={() => { setSearch(""); setSelectedCategory("all"); }}>Clear filters</button>
+              </div>
+            ) : categoryGroups.map((group) => (
+              <section className={styles.categorySection} key={group.id} id={group.id === "wholesale-blanks" ? "wholesale" : undefined} aria-labelledby={`category-${group.id}`}>
+                <div className={styles.categoryHeading}>
+                  <h3 id={`category-${group.id}`}>{group.label}</h3>
+                  <span>{String(group.items.length).padStart(2, "0")} {group.items.length === 1 ? "style" : "styles"}</span>
+                </div>
+                <div className={styles.productGrid}>
+                  {group.items.map((product) => (
+                    <ProductCard key={product.id} product={product} onAddToCart={addToCart} />
+                  ))}
+                </div>
+              </section>
+            ))}
+          </section>
+
+          <section className={styles.wholesaleBanner}>
             <div>
-              <p className="date-line">{new Intl.DateTimeFormat(undefined, { weekday: "long", month: "long", day: "numeric" }).format(new Date())}</p>
-              <h1>Make room for focus.</h1>
-              <p className="heading-caption">You have <strong>{activeCount} {activeCount === 1 ? "priority" : "priorities"}</strong> on your plate today.</p>
+              <p className={styles.eyebrow}>MADE TO ORDER, MADE FOR YOU</p>
+              <h2>Building a brand or outfitting a team?</h2>
+              <p>Shop blank tees by the piece, pack, or bale. Set your size, color, and mesh details before adding to your bag.</p>
             </div>
-            <button className="primary-button" type="button" onClick={() => openTaskDialog()}><Icon name="plus" />Create a task</button>
-          </section>
-
-          <section className="overview-grid" aria-label="Daily overview">
-            <article className="overview-card">
-              <div className="card-heading"><h2>Today&apos;s momentum</h2><span className="today-label"><span className="status-dot" />LIVE OVERVIEW</span></div>
-              <div className="overview-bottom">
-                <div className="metric"><strong>{completedCount}</strong><span>of {tasks.length} tasks complete</span></div>
-                <div className="progress-block">
-                  <div className="progress-label"><span>Daily progress</span><strong>{progress}%</strong></div>
-                  <div className="progress-track" role="progressbar" aria-label="Daily task progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><div className="progress-fill" style={{ width: `${progress}%` }} /></div>
-                </div>
-              </div>
-              <div className="micro-stats"><span><i className="legend-dot" />{activeCount} in progress</span><span><i className="legend-dot orange" />{highPriorityCount} high priority</span></div>
-            </article>
-            <article className="focus-card" aria-labelledby="focusTitle">
-              <span className="eyebrow"><Icon name="spark" />AI focus companion</span>
-              <h2 id="focusTitle">{focusTask ? "A good place to start." : "A little clarity goes a long way."}</h2>
-              <p aria-live="polite">{focusTask ? `Try “${focusTask.text}” first — your locally generated suggestion prioritizes urgency and due date.` : "You are all caught up. Add a task when you are ready for your next step."}</p>
-            </article>
-          </section>
-
-          <OrbitCanvas tasks={tasks} onConvert={convertStickyNote} onCalendarChange={applyCalendarChange} />
-
-          <section aria-labelledby="tasksHeading">
-            <div className="section-heading">
-              <div className="section-title"><h2 id="tasksHeading">Your tasks</h2><span>{visibleTasks.length} {visibleTasks.length === 1 ? "item" : "items"}</span></div>
-              <div className="calendar-actions"><button className="calendar-export" type="button" onClick={exportCalendar}>Export .ics</button>
-                <div className="filter-list" role="group" aria-label="Filter tasks">
-                  {(["all", "active", "completed"] as Filter[]).map((value) => <button key={value} className="filter-button" type="button" onClick={() => setFilter(value)} aria-pressed={filter === value}>{value[0].toUpperCase() + value.slice(1)}</button>)}
-                </div>
-              </div>
-            </div>
-            <p className="calendar-export-note">Add dated tasks to Google Calendar individually, or export them as a calendar file. No account connection is configured.</p>
-            <ul className="task-list" aria-label="Your tasks">
-              {visibleTasks.map((task) => {
-                const overdue = !!task.dueDate && task.dueDate < dateOffset(0) && !task.completed;
-                return <li className={`task-item${task.completed ? " completed" : ""}`} key={task.id}>
-                  <input className="task-check" type="checkbox" checked={task.completed} onChange={() => saveTasks(tasks.map((item) => item.id === task.id ? { ...item, completed: !item.completed } : item))} aria-label={`${task.completed ? "Reopen" : "Complete"} ${task.text}`} />
-                  <div className="task-main"><span className="task-title">{task.text}</span><div className="task-subline">
-                    <span className={`priority ${task.priority}`}>{task.priority}</span>
-                    {task.dueDate && <span className={`due-date${overdue ? " overdue" : ""}`}><Icon name="calendar" />{overdue ? "Overdue · " : "Due "}{displayDate(task.dueDate)}</span>}
-                    {task.dueTime && <span className="due-date">{task.dueTime}</span>}
-                    {task.calendarSyncStatus === "event-deleted" && <span className="sync-state">Calendar event removed</span>}
-                    {task.calendarSyncStatus === "event-modified" && <span className="sync-state">Calendar updated</span>}
-                  </div></div>
-                  <div className="task-actions">
-                    {task.dueDate && <a className="icon-button calendar-task-link" href={calendarUrl(task)} target="_blank" rel="noreferrer" aria-label={`Add ${task.text} to Google Calendar`} title="Add to Google Calendar"><Icon name="calendar" /></a>}
-                    <button className="icon-button" type="button" onClick={() => openTaskDialog(task.id)} aria-label={`Edit ${task.text}`} title="Edit task"><Icon name="edit" /></button>
-                    <button className="icon-button delete" type="button" onClick={() => { saveTasks(tasks.filter((item) => item.id !== task.id)); notify("Task deleted."); }} aria-label={`Delete ${task.text}`} title="Delete task"><Icon name="delete" /></button>
-                  </div>
-                </li>;
-              })}
-            </ul>
-            {ready && visibleTasks.length === 0 && <div className="empty-state"><span className="empty-icon"><Icon name="check" /></span><h3>{tasks.length ? "Nothing in this view." : "A fresh start."}</h3><p>{tasks.length ? "Try another filter to find your tasks." : "Add your first task and make today count."}</p></div>}
-            <p className="storage-message" role="status" aria-live="polite">{storageMessage}</p>
+            <a href="#collection">Shop wholesale blanks <span aria-hidden="true">↗</span></a>
           </section>
         </main>
+
+        <footer className={styles.footer} id="footer">
+          <Link className={styles.brand} href="/" aria-label="TeesTale home">
+            <span className={styles.brandMark} aria-hidden="true">
+              <svg viewBox="0 0 32 32" fill="none"><path d="M7 10 13 7h6l6 3 4 2-3 6-4-2v9H10v-9l-4 2-3-6 4-2Z" fill="currentColor" /></svg>
+            </span>
+            <span className={styles.brandName}>TeesTale<span>®</span></span>
+          </Link>
+          <p>Good clothes. Good stories. Made to move.</p>
+          <span>© 2026 TeesTale · Prices in ₦ NGN</span>
+        </footer>
       </div>
-
-      {modal?.kind === "task" && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) closeModal(); }} onKeyDown={onModalKeyDown}>
-        <section className="task-dialog" role="dialog" aria-modal="true" aria-labelledby="taskDialogTitle" data-dialog>
-          <div className="dialog-heading"><div><h2 id="taskDialogTitle">{modal.id ? "Edit task" : "Create a task"}</h2><p>Give your next step a name. You can refine it later.</p></div><button className="dialog-close" type="button" onClick={closeModal} aria-label="Close dialog"><Icon name="close" /></button></div>
-          <form onSubmit={saveTask}>
-            <label className="field-label" htmlFor="taskName">Task name</label>
-            <input ref={nameInput} className="task-input" id="taskName" value={taskName} onChange={(event) => setTaskName(event.target.value)} maxLength={200} autoComplete="off" placeholder="e.g. Prepare the project update" required />
-            <div className="form-options">
-              <div><label className="field-label" htmlFor="priority">Priority</label><select className="field-select" id="priority" value={priority} onChange={(event) => setPriority(event.target.value as Priority)}><option value="low">Low priority</option><option value="medium">Medium priority</option><option value="high">High priority</option></select></div>
-              <div><label className="field-label" htmlFor="dueDate">Due date <span className="optional">(optional)</span></label><input className="field-date" id="dueDate" type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} /></div>
-            </div>
-            <div className="dialog-actions"><button className="secondary-button" type="button" onClick={closeModal}>Cancel</button><button className="primary-button" type="submit">{modal.id ? "Save changes" : "Add to my list"}</button></div>
-          </form>
-        </section>
-      </div>}
-
-      {modal?.kind === "account" && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) closeModal(); }} onKeyDown={onModalKeyDown}>
-        <section className="account-dialog" role="dialog" aria-modal="true" aria-labelledby="accountTitle" data-dialog>
-          <div className="dialog-heading"><div><h2 id="accountTitle">Welcome to Orbit</h2><p>Sign in or create an account.</p></div><button className="dialog-close" type="button" onClick={closeModal} aria-label="Close account dialog"><Icon name="close" /></button></div>
-          <div className="account-tabs" role="group" aria-label="Choose account action">
-            <button className="account-tab" type="button" aria-pressed={accountMode === "signin"} onClick={() => { setAccountMode("signin"); setFeedback(""); }}>Sign in</button>
-            <button className="account-tab" type="button" aria-pressed={accountMode === "signup"} onClick={() => { setAccountMode("signup"); setFeedback(""); }}>Create account</button>
-          </div>
-          <p className="account-copy">Account access is a preview in this build. No credentials will be sent or stored.</p>
-          <form onSubmit={(event) => { event.preventDefault(); setFeedback("Authentication is not configured. No account was created and no credentials were sent."); }}>
-            <label className="field-label" htmlFor="accountEmail">Email address</label><input ref={emailInput} className="task-input" id="accountEmail" type="email" autoComplete="email" required placeholder="you@example.com" />
-            <label className="field-label account-password-label" htmlFor="accountPassword">Password</label><input className="task-input" id="accountPassword" type="password" autoComplete={accountMode === "signup" ? "new-password" : "current-password"} required minLength={8} placeholder="At least 8 characters" />
-            <button className="primary-button account-submit" type="submit">{accountMode === "signin" ? "Sign in" : "Create account"}</button>
-          </form>
-          <p className="account-section-label">Calendar connections</p>
-          <div className="provider-list" aria-label="Calendar providers">
-            {["Google Calendar", "Calendly", "Microsoft Calendar"].map((provider) => <button key={provider} className="provider-button" type="button" onClick={() => setFeedback(`${provider} connection is not configured. A backend and provider OAuth credentials are required; no connection was made.`)}><span>{provider}</span><span>SETUP REQUIRED</span></button>)}
-          </div>
-          {feedback && <p className="account-feedback" role="status" aria-live="polite">{feedback}</p>}
-          <p className="account-disclaimer">Live sign-in and two-way calendar sync need a configured backend and provider OAuth credentials. No connection is being made here. You can still add dated tasks to Google Calendar individually or export an .ics file.</p>
-        </section>
-      </div>}
-
-      <div className={`toast${toast ? " visible" : ""}`} role="status" aria-live="polite">{toast}</div>
     </div>
   );
 }

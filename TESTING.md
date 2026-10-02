@@ -1,6 +1,6 @@
 # Browser testing checklist
 
-Start the Next.js app using `npm run dev` from **Terminal → New Terminal** in VS Code. To test in VS Code's integrated browser, open the Command Palette (`Ctrl+Shift+P`), run **Simple Browser: Show**, and enter `http://localhost:3000`; alternatively, open the URL in a regular browser. Orbit is at `/`; TeesTale is at `/teestale`. Test the shop at a mobile viewport around 375 px wide as well as a desktop-size viewport.
+Start the Next.js app using `npm run dev` from **Terminal → New Terminal** in VS Code. To test in VS Code's integrated browser, open the Command Palette (`Ctrl+Shift+P`), run **Simple Browser: Show**, and enter `http://localhost:3000`; alternatively, open the URL in a regular browser. The TeesTale shop is at `/`; the Orbit dashboard checklist applies at `/orbit`. Test the shop at a mobile viewport around 375 px wide as well as a desktop-size viewport.
 
 ## TeesTale shop
 
@@ -26,7 +26,7 @@ Start the Next.js app using `npm run dev` from **Terminal → New Terminal** in 
 - Select Google Calendar, Calendly, and Microsoft Calendar; each should state that setup is required and no connection was made.
 - Enter `<script>alert(1)</script>` as a task and confirm it is rendered as text.
 - Use keyboard navigation to operate controls and dialogs; confirm Escape, the close button, and clicking outside a dialog close it.
-- Clear the browser's site data at `/` and refresh to confirm the three first-run sample tasks return.
+- Clear the browser's site data at `/orbit` and refresh to confirm the three first-run sample tasks return.
 - Add a sticky note by double-clicking the canvas and by using **New note**; edit it inline, drag it around, and refresh to confirm notes persist independently of tasks.
 - Drag a sticky note onto today's timeline, pick a time, and confirm it becomes a timed task and appears on the timeline; confirm timed tasks export with a 10-minute `.ics` reminder.
 - Choose **Orbital sweep** and verify unfinished notes move to Drawer Archive; restore/delete an archived note. A converted note should no longer remain on the canvas.

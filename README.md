@@ -1,6 +1,4 @@
-# TeesTale Shop and Orbit Dashboard
-
-TeesTale is the main storefront at `/`, with a configurable apparel catalog and a browser-persisted shopping bag. The original Orbit task dashboard is preserved at `/orbit`.
+# Orbit — AI-assisted To-Do Dashboard
 
 Orbit is a responsive Next.js App Router dashboard for managing daily tasks. It includes task progress, priorities, due dates, local persistence, four appearance themes, and a locally generated focus suggestion. Google Calendar, Calendly, Microsoft Calendar, and account controls are clearly marked as previews; no authentication or connected sync is implemented.
 
@@ -14,10 +12,10 @@ Requirements: Node.js 20.9 or later and npm.
 
 1. Open this project folder in VS Code.
 2. In the integrated terminal, run `npm install` once, then `npm run dev`.
-3. To use VS Code's integrated browser, open the Command Palette (`Ctrl+Shift+P`), run **Simple Browser: Show**, and enter `http://localhost:3000`. The TeesTale storefront is the Next.js home route; Orbit remains available at `http://localhost:3000/orbit`.
+3. To use VS Code's integrated browser, open the Command Palette (`Ctrl+Shift+P`), run **Simple Browser: Show**, and enter `http://localhost:3000`. You can also open that URL in your regular browser. The dashboard is the Next.js home route (`src/app/page.tsx`).
 4. To stop the development server, focus the terminal and press `Ctrl+C`.
 
-The mock storefront and Orbit dashboard require no environment variables. TeesTale cart data and Orbit task, canvas, and appearance data are stored in the current browser's `localStorage`. The Supabase client scaffold requires `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` only when it is called; no credentials are included in this repository.
+The app requires no environment variables. Task data and appearance are stored in the current browser's `localStorage`; clearing site data resets it to the three first-run sample tasks.
 
 ## Validate
 
@@ -56,9 +54,3 @@ Run the calendar service tests with `npm run test:calendar`.
 3. **Shared projects and collaboration:** add authenticated workspaces, assignments, comments, recurring tasks, and real-time updates backed by a database.
 
 You can add your own GitHub repositories as projects in the Copilot app sidebar to continue development with the repository's code and history.
-
-## Current Project Status
-
-- **Phase 2 — shop UI:** Complete. The home route provides category filters and search across wholesale blanks, retail polos, bespoke mesh, and accessories; product options include size, basic color, mesh placement, and supported piece/pack/bale pricing. The shopping bag persists locally, including customizations and quantity. Checkout is intentionally out of scope.
-- **Phase 3 — scaffolding:** Database migration, lazy Supabase client singleton, and `GET /api/products` are in place. The API currently serves the TypeScript mock catalog; the migration has not been applied to an external Supabase project, and no credentials or live database connection are configured.
-- **Next steps:** Configure the two public Supabase environment variables and apply the migration in the intended Supabase project, then replace the mock catalog API source with database-backed reads. Authentication, order submission, and payment/checkout flows are not implemented.
